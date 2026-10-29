@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Paint.io - 실시간 공공 & 비공개 그림판</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+  <style>
+    body { background-color: #0f172a; color: #f8fafc; user-select: none; }
+    canvas { touch-action: none; cursor: crosshair; }
+    .glass-panel { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
+    .tool-btn.active { background-color: #3b82f6; color: white; border-color: #60a5fa; box-shadow: 0 0 12px rgba(59, 130, 246, 0.5); }
+    .color-swatch { width: 28px; height: 28px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.2); cursor: pointer; transition: transform 0.15s ease; }
+    .color-swatch:hover { transform: scale(1.2); }
+  </style>
+</head>
+<body class="h-screen w-screen flex flex-col overflow-hidden font-sans">
+  <header class="h-16 border-b border-slate-800 glass-panel px-6 flex items-center justify-between z-10 shrink-0">
+    <div class="flex items-center space-x-3">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center font-black text-xl text-white shadow-lg">P</div>
+      <div>
+        <h1 class="text-xl font-bold bg-gradient-to-r from-blue-400 to-pink-400 bg-clip-text text-transparent">Paint.io</h1>
+        <p class="text-xs text-slate-400">실시간 멀티플레이 캔버스</p>
+      </div>
+    </div>
+    <div class="flex items-center space-x-4">
+      <div class="flex items-center bg-slate-900/80 px-4 py-2 rounded-xl border border-slate-700/60">
+        <span class="text-xs text-slate-400 mr-2">현재 방:</span>
+        <span id="currentRoomText" class="font-mono font-bold text-sm text-emerald-400">Public (공공)</span>
+      </div>
+      <button id="copyRoomBtn" onclick="copyRoomCode()" class="hidden px-3 py-2 bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 rounded-xl border border-slate-700 flex items-center gap-1.5 transition">
+        <i class="fa-regular fa-copy"></i> 링크 복사
+      </button>
+      <button onclick="openRoomModal()" class="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-sm font-semibold text-white rounded-xl shadow-lg transition">
+        <i class="fa-solid fa-door-open mr-1.5"></i> 방 변경 / 비공개 방
+      </button>
+    </div>
+  </header>
+  
+  <div class="flex-1 flex overflow-hidden relative">
+    <aside class="w-20 glass-panel border-r border-slate-800 flex flex-col items-center py-4 space-y-4 z-10 shrink-0">
+      <button onclick="setTool('pen')" id="tool-pen" class="tool-btn active w-12 h-12 rounded-2xl flex items-center justify-center text-lg text-slate-300 hover:bg-slate-800"><i class="fa-solid fa-pen-nib"></i></button>
+      <button onclick="setTool('eraser')" id="tool-eraser" class="tool-btn w-12 h-12 rounded-2xl flex items-center justify-center text-lg text-slate-300 hover:bg-slate-800"><i class="fa-solid fa-eraser"></i></button>
+      <button onclick="setTool('line')" id="tool-line" class="tool-btn w-12 h-12 rounded-2xl flex items-center justify-center text-lg text-slate-300 hover:bg-slate-800"><i class="fa-solid fa-minus"></i></button>
+      <button onclick="setTool('rect')" id="tool-rect" class="tool-btn w-12 h-12 rounded-2xl flex items-center justify-center text-lg text-slate-300 hover:bg-slate-800"><i class="fa-regular fa-square"></i></button>
+      <button onclick="setTool('circle')" id="tool-circle" class="tool-btn w-12 h-12 rounded-2xl flex items-center justify-center text-lg text-slate-300 hover:bg-slate-800"><i class="fa-regular fa-circle"></i></button>
+      <hr class="w-10 border-slate-800 my-1">
+      <button onclick="clearCanvas(true)" class="w-12 h-12 rounded-2xl flex items-center justify-center text-lg text-rose-400 hover:bg-rose-500/10"><i class="fa-solid fa-trash-can"></i></button>
+      <button onclick="downloadCanvas()" class="w-12 h-12 rounded-2xl flex items-center justify-center text-lg text-emerald-400 hover:bg-emerald-500/10"><i class="fa-solid fa-download"></i></button>
+    </aside>
+    
+    <main class="flex-1 relative overflow-hidden bg-slate-950 flex items-center justify-center">
+      <canvas id="paintCanvas" class="bg-white rounded-lg shadow-2xl border border-slate-800"></canvas>
+      <div class="absolute bottom-6 left-1/2 -translate-x-1/2 glass-panel px-6 py-3 rounded-2xl border border-slate-700/60 flex items-center space-x-6 shadow-2xl z-10">
+        <div class="flex items-center space-x-2">
+          <label class="text-xs text-slate-400 font-medium">크기</label>
+          <input type="range" id="brushSize" min="1" max="50" value="5" class="w-28 accent-blue-500 cursor-pointer">
+          <span id="brushSizeText" class="text-xs text-slate-300 font-mono w-6 text-right">5px</span>
+        </div>
+        <div class="h-6 w-px bg-slate-800"></div>
+        <div class="flex items-center space-x-2">
+          <input type="color" id="colorPicker" value="#000000" class="w-8 h-8 rounded-lg cursor-pointer bg-transparent border-0">
+          <div class="flex items-center space-x-1.5 pl-1">
+            <button onclick="setColor('#000000')" class="color-swatch" style="background-color: #000000;"></button>
+            <button onclick="setColor('#ef4444')" class="color-swatch" style="background-color: #ef4444;"></button>
+            <button onclick="setColor('#3b82f6')" class="color-swatch" style="background-color: #3b82f6;"></button>
+            <button onclick="setColor('#22c55e')" class="color-swatch" style="background-color: #22c55e;"></button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div id="roomModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center hidden z-50">
+    <div class="glass-panel p-8 rounded-3xl w-full max-w-md border border-slate-700 shadow-2xl space-y-6">
+      <div class="flex justify-between items-center">
+        <h2 class="text-xl font-bold text-white">방 설정 / 이동</h2>
+        <button onclick="closeRoomModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+      <button onclick="joinRoom('public')" class="w-full py-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-slate-200 font-semibold flex items-center justify-center gap-2">
+        <i class="fa-solid fa-globe text-blue-400"></i> 공공 그림판 (Public) 입장
+      </button>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">비공개 방 코드로 입장</label>
+          <div class="flex space-x-2">
+            <input type="text" id="roomInput" placeholder="6자리 방 코드 입력" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 uppercase font-mono">
+            <button onclick="joinRoomFromInput()" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl">입장</button>
+          </div>
+        </div>
+        <button onclick="createPrivateRoom()" class="w-full py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-semibold text-sm rounded-xl flex items-center justify-center gap-2">
+          <i class="fa-solid fa-lock"></i> 새 비공개 방 만들기
+        </button>
+      </div>
+    </div>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>
